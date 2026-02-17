@@ -1,0 +1,64 @@
+name: Cloud Inventory Processor
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Inventory Repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: |
+          npm install @google/generative-ai
+          
+      - name: Run Cloud Valuation
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          node scripts/cloud_valuation.cjs inventory-RAW.csv inventoryeditedvalues.csv
+
+      - name: Sanitize CSV
+        run: |
+          node scripts/sanitize_csv.cjs inventory-RAW.csv inventorycsv.csv
+
+      - name: Convert to Facebook Catalog
+        run: |
+          node scripts/convert_to_fb_catalog.cjs inventorycsv.csv inventoryFB.csv
+
+      - name: Commit and Push to Private Repo
+        run: |
+          git config --global user.name "High Life Auto Bot"
+          git config --global user.email "bot@highlifeauto.com"
+          git add inventoryeditedvalues.csv inventorycsv.csv inventoryFB.csv
+          git commit -m "Auto-processed inventory [cloud]" || echo "No changes to commit"
+          git push origin main
+
+      - name: Push Washed Files to Public Repo
+        if: env.HAS_GH_PAT == 'true'
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          HAS_GH_PAT: ${{ secrets.GH_PAT != '' }}
+        run: |
+          git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/matt653/high-life-auto.git public-repo
+          cp inventorycsv.csv public-repo/public/
+          cp inventoryFB.csv public-repo/public/
+          cp inventoryeditedvalues.csv public-repo/public/
+          cd public-repo
+          git config --global user.name "High Life Auto Bot"
+          git config --global user.email "bot@highlifeauto.com"
+          git add public/inventorycsv.csv public/inventoryFB.csv public/inventoryeditedvalues.csv
+          git commit -m "Inventory Sync from Private Source" || echo "No changes to commit"
+          git push origin main
